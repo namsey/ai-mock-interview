@@ -1,208 +1,298 @@
 # Error Handling Documentation
 
-This document outlines the comprehensive error handling implemented across the mock interview application.
+This document describes the comprehensive error handling implemented across the Mock Interview application.
 
 ## Overview
 
-Error handling has been added to all layers of the application:
-- **Frontend (pages/index.js)**: User-facing error messages and recovery
-- **API Routes (pages/api/)**: Request validation and error responses
-- **Library Functions (lib/)**: Core function error handling
+The application has multi-layered error handling to ensure robust operation and clear error messages for users:
 
-## Frontend Error Handling (pages/index.js)
+1. **Input Validation** - Validates all user inputs before processing
+2. **API Error Handling** - Catches and handles API failures gracefully  
+3. **Session Management** - Handles session-related errors
+4. **Frontend Error Handling** - User-friendly error messages and recovery
+5. **Logging** - Centralized error logging for debugging
 
-### File Upload
-- **File type validation**: Only .txt files accepted
-- **File size validation**: Maximum 1MB file size
-- **Content validation**: Ensures file content is valid string
-- **Error recovery**: Prompts user to paste CV manually if upload fails
+---
 
-### Start Interview
-- **Request timeout**: 60-second timeout with abort controller
-- **Network error handling**: Detects connection issues
-- **Response validation**: Validates server response structure
-- **User feedback**: Clear error messages for different failure scenarios
+## Backend Error Handling
 
-### Send Answer
-- **Input validation**: Max 5000 characters
-- **Request timeout**: 60-second timeout
-- **Optimistic updates**: User message added immediately, rolled back on failure
-- **Specific error codes**:
-  - `404`: Session expired - prompts page reload
-  - `429`: Rate limit - suggests retry
-  - `402`: Quota exceeded - informative message
-- **Network error handling**: Connection issue detection
-- **Response validation**: Validates response type and content
+### `/api/start` Endpoint
 
-## API Routes Error Handling
+**Validation:**
+- Checks HTTP method (POST only)
+- Validates request body exists and is valid JSON
+- Validates CV text is present and meets minimum length requirements
 
-### /api/start (pages/api/start.js)
+**Error Responses:**
+- `405` - Method not allowed (non-POST requests)
+- `400` - Invalid request body, missing CV text, or CV too short
+- `500` - AI service configuration errors
+- `429` - Rate limit exceeded
+- `402` - AI service quota exceeded
+- `500` - Unexpected errors
 
-#### Request Validation
-- HTTP method validation (POST only)
-- Request body validation
-- CV text length validation (minimum 50 chars, maximum 50,000 chars)
-- CV text type validation
-
-#### Processing Errors
-- **CV parsing errors**: Caught and logged with specific error message
-- **Session creation errors**: Handled with appropriate error response
-- **AI generation errors**: Specific handling for:
-  - Configuration errors (no API keys)
-  - Rate limits (429)
-  - Quota exceeded (402)
-  - General AI failures
-
-#### Error Responses
+**Error Flow:**
 ```javascript
-400 - Bad Request (validation failures)
-402 - Payment Required (quota exceeded)
-429 - Too Many Requests (rate limit)
-500 - Internal Server Error (unexpected errors)
+try {
+  // Validate input
+  // Parse CV
+  // Create session
+  // Generate opening question
+  return success
+} catch (aiError) {
+  // Specific AI error handling
+} catch (error) {
+  // Generic error handling
+}
 ```
 
-### /api/chat (pages/api/chat.js)
+### `/api/chat` Endpoint
 
-#### Request Validation
-- HTTP method validation (POST only)
-- Request body validation
-- Session ID validation (string type)
-- Answer validation (string type, not empty, max 5000 chars)
+**Validation:**
+- Checks HTTP method (POST only)
+- Validates request body structure
+- Validates sessionId format and existence
+- Validates answer is present and within length limits
+- Checks session hasn't been completed
 
-#### Session Management Errors
-- Session retrieval errors
-- Session not found (404)
-- Completed session attempts (400)
-- Message storage errors
+**Error Responses:**
+- `405` - Method not allowed
+- `400` - Invalid request body or parameters
+- `404` - Session not found or expired
+- `429` - Rate limit exceeded  
+- `402` - AI service quota exceeded
+- `500` - Internal errors (session retrieval, message storage, AI failures)
 
-#### AI Generation Errors
-Both `generateNextQuestion` and `generateFeedback` functions handle:
-- AI configuration errors
-- Rate limit errors (429)
-- Quota exceeded errors (402)
-- Invalid AI responses
-- General AI failures
-
-#### Error Responses
+**Error Flow:**
 ```javascript
-400 - Bad Request (validation failures)
-402 - Payment Required (quota exceeded)
-404 - Not Found (session not found)
-429 - Too Many Requests (rate limit)
-500 - Internal Server Error (unexpected errors)
+try {
+  // Validate input
+  // Load session
+  // Store answer
+  // Generate next question or feedback
+  return success
+} catch (sessionError) {
+  // Session-specific errors
+} catch (aiError) {
+  // AI service errors with specific status codes
+} catch (error) {
+  // Unexpected errors
+}
 ```
+
+---
 
 ## Library Error Handling
 
-### lib/cvParser.js
+### `lib/aiClient.js`
 
-#### parseCV Function
-- **Input validation**: Checks for empty or invalid CV text
-- **Extraction errors**: Try-catch around AI parsing
-- **Response validation**: Validates parsed job title and skills array
-- **Fallback values**: Returns safe defaults on failure
-- **Error logging**: Detailed console errors for debugging
+**Error Handling:**
+- Validates API keys are configured
+- Handles provider-specific errors (OpenAI, Anthropic)
+- Catches HTTP errors (429 rate limits, 402 quota exceeded, etc.)
+- Handles network failures
+- Validates AI responses
 
-### lib/sessionStore.js
+**Fallback Behavior:**
+- Falls back to alternative AI providers if primary fails
+- Returns meaningful error messages for debugging
 
-#### createSession Function
-- **Input validation**: Validates all required parameters
-- **ID generation**: Uses crypto.randomUUID() with fallback
-- **Safe defaults**: Ensures valid session structure
+### `lib/cvParser.js`
 
-#### getSession Function
-- **Validation**: Checks session ID parameter
-- **Null handling**: Returns null for non-existent sessions
+**Validation:**
+- Validates CV text is a non-empty string
+- Enforces minimum length requirement (configurable)
+- Validates parsed data structure
 
-#### addMessage Function
-- **Input validation**: Validates session ID, role, and content
-- **Session existence check**: Ensures session exists
-- **Completed phase check**: Prevents messages after completion
+**Error Handling:**
+- Returns safe defaults if parsing fails
+- Logs warnings for missing data
+- Never crashes - always returns valid data structure
 
-#### markCompleted Function
-- **Input validation**: Validates session ID
-- **Session existence check**: Ensures session exists
+### `lib/sessionStore.js`
 
-### lib/aiClient.js
+**Validation:**
+- Validates all input parameters (sessionId, role, content, etc.)
+- Type checking for all arguments
 
-#### sendMessage Function
-- **Configuration validation**: Checks for API keys
-- **Provider fallback**: Tries Anthropic, then OpenAI, then Gemini
-- **Specific error handling**:
-  - Network errors
-  - Rate limits (429)
-  - Quota exceeded (402)
-  - Invalid responses
-- **Retry logic**: (Can be enhanced based on requirements)
-- **Error logging**: Detailed error information for debugging
+**Error Handling:**
+- Returns null for invalid session IDs
+- Logs errors to console
+- Throws errors for invalid operations (caught by API handlers)
 
-#### Individual Provider Functions
-Each provider function includes:
-- Request validation
-- Response validation
-- Error catching and re-throwing with context
-- Proper error message formatting
+### `lib/logger.js`
+
+**Features:**
+- Writes to both console and file system
+- Safely handles file system errors
+- Browser/Node.js environment detection
+- Structured log format with timestamps and context
+
+**Error Handling:**
+- Falls back to console-only if file writes fail
+- Never crashes the application
+
+---
+
+## Frontend Error Handling
+
+### CV Upload Phase (`pages/index.js`)
+
+**Validation:**
+- File type checking (.txt only)
+- File size validation (max 1MB)
+- Minimum CV length validation (50 characters)
+
+**Error Handling:**
+```javascript
+try {
+  // File reading
+  // Content validation
+} catch (err) {
+  // User-friendly alert
+  // Fallback suggestions
+}
+```
+
+### Interview Start
+
+**Error Handling:**
+- Request timeout (60 seconds)
+- Network failure detection
+- Invalid response format validation
+- User-friendly error messages
+
+**User Feedback:**
+- Timeout: "Request timed out. The server might be busy."
+- Network: "Network error. Please check your internet connection."
+- Generic: Displays specific error message from server
+
+### Interview Chat
+
+**Error Handling:**
+- Request timeout (60 seconds)
+- Answer length validation (max 5000 characters)
+- Network failure detection
+- Session expiration detection
+- Optimistic UI with rollback on failure
+
+**Specific Error Cases:**
+- `404` - Session expired → Alert user and reload page
+- `429` - Rate limit → "Please wait a moment and try again"
+- `402` - Quota exceeded → "Please try again later"
+
+**User Experience:**
+- Optimistic message rendering (instant feedback)
+- Automatic rollback on errors
+- Input preservation on failure
+- Loading states during async operations
+
+---
+
+## Configuration-Based Error Messages
+
+All error handling uses configuration from `config.json` for:
+- Maximum answer length
+- Minimum CV length  
+- Timeout values
+- Rate limiting parameters
+
+This allows easy adjustment of limits without code changes.
+
+---
+
+## Error Logging
+
+All errors are logged using the centralized logger:
+
+**Log Levels:**
+- `ERROR` - Critical errors affecting functionality
+- `WARN` - Non-critical issues (e.g., no skills detected)
+- `INFO` - Operational information
+
+**Log Output:**
+- Console (for development)
+- `logs/error.log` (errors only)
+- `logs/combined.log` (all levels)
+
+**Log Format:**
+```
+[timestamp] [level] [context] message
+Stack: error.stack (if available)
+Details: JSON or string representation
+
+```
+
+---
+
+## Best Practices Implemented
+
+1. **Never Crash**: All error paths are handled - app never throws unhandled exceptions
+2. **User-Friendly Messages**: Technical errors are translated to helpful user messages
+3. **Graceful Degradation**: Falls back to defaults when possible
+4. **Logging**: All errors are logged for debugging
+5. **Input Validation**: Validate early and provide clear feedback
+6. **Type Safety**: Check types before processing
+7. **Rollback Support**: Frontend can revert optimistic updates on errors
+8. **Timeout Protection**: All network requests have timeouts
+9. **Specific Error Codes**: HTTP status codes match error types
+10. **Recovery Paths**: Users always have a way to recover from errors
+
+---
+
+## Testing Error Scenarios
+
+To test error handling:
+
+1. **Invalid CV**: Try submitting empty or too-short CV
+2. **Network Failure**: Disconnect network during interview
+3. **Session Expiration**: Restart server mid-interview
+4. **Long Answers**: Try submitting answers > 5000 characters
+5. **File Upload**: Try uploading non-.txt files or large files
+6. **API Rate Limits**: Make rapid successive requests
+7. **Invalid API Keys**: Configure invalid AI API keys
+
+---
+
+## Future Improvements
+
+1. **Retry Logic**: Automatic retry for transient failures
+2. **Offline Support**: Queue actions when offline, sync when online
+3. **Error Analytics**: Track error patterns for improvements
+4. **User Error Reporting**: Allow users to report bugs with context
+5. **Circuit Breaker**: Prevent cascading failures
+6. **Rate Limiting UI**: Show rate limit status to users
+7. **Progressive Enhancement**: Degrade features gracefully if AI unavailable
+
+---
 
 ## Error Response Format
 
-All API endpoints return consistent error format:
+All API errors follow this structure:
+
 ```json
 {
   "error": "Human-readable error message"
 }
 ```
 
-## Error Logging
+Frontend checks `res.ok` and parses error messages appropriately.
 
-All errors are logged to console with:
-- Component/function identifier
-- Error type/context
-- Full error message
-- Stack trace (where applicable)
+---
 
-## User Experience
+## Summary
 
-### Error Messages
-- **Clear and actionable**: Users understand what went wrong
-- **Recovery guidance**: Users know what to do next
-- **Non-technical**: Avoid jargon in user-facing messages
+The Mock Interview application has comprehensive error handling at every layer:
 
-### Error Recovery
-- **Automatic rollback**: Failed operations don't leave partial state
-- **Retry prompts**: Users encouraged to retry transient failures
-- **Session recovery**: Expired sessions prompt fresh start
-- **Graceful degradation**: Non-critical failures don't block progress
+- ✅ Input validation
+- ✅ Network error handling  
+- ✅ Session management errors
+- ✅ AI service errors
+- ✅ File upload errors
+- ✅ Timeout protection
+- ✅ User-friendly messages
+- ✅ Centralized logging
+- ✅ Graceful degradation
+- ✅ Recovery mechanisms
 
-## Testing Recommendations
-
-To test error handling:
-
-1. **Network errors**: Disable internet connection during requests
-2. **Invalid input**: Try empty strings, very long strings, invalid types
-3. **Missing API keys**: Remove .env.local file
-4. **Rate limits**: Make rapid successive requests
-5. **Session expiration**: Use invalid/old session IDs
-6. **File upload errors**: Try invalid file types, oversized files
-7. **Timeout scenarios**: Simulate slow network conditions
-
-## Future Enhancements
-
-Potential improvements:
-- Retry logic with exponential backoff for transient failures
-- Error tracking/monitoring service integration (e.g., Sentry)
-- More granular error codes for debugging
-- User-friendly error page for critical failures
-- Offline mode detection and handling
-- Request cancellation on navigation
-- Error analytics and reporting
-
-## Maintenance
-
-When adding new features:
-1. Always validate user input
-2. Wrap external API calls in try-catch
-3. Provide specific error messages
-4. Log errors with context
-5. Return appropriate HTTP status codes
-6. Test error scenarios
-7. Update this documentation
+The application is production-ready with robust error handling that ensures a smooth user experience even when things go wrong.

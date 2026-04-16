@@ -18,6 +18,41 @@
       }
     },
     "preferredProvider": "openai",
-    "maxTokens": 256
+    "maxTokens": {
+      "openingQuestion": 256,
+      "followUpQuestion": 256,
+      "feedback": 600
+    }
+  },
+  "interview": {
+    "maxQuestions": 6,
+    "cvMinLength": 50,
+    "answerMaxLength": 5000,
+    "depthPhases": {
+      "opening": 1,
+      "middle": 3,
+      "deep": 6
+    },
+    "cvTruncateLength": 1500
+  },
+  "prompts": {
+    "interviewerPersona": "You are a senior hiring manager conducting a real job interview. Your style:\n- Professional, focused, and direct — but not cold\n- Ask ONE question at a time. Never stack multiple questions.\n- React naturally to what the candidate says. If they mention something interesting, dig into it.\n- Escalate depth: start broad, then progressively get more specific and technical\n- Use probing follow-ups: \"why did you choose that?\", \"what went wrong?\", \"how would you do it differently now?\"\n- Do NOT use hollow filler phrases like \"Great answer!\", \"Excellent!\", or \"That's interesting!\"\n- Do NOT give hints or help the candidate. You are evaluating, not teaching.\n- Sound like a human, not a chatbot.",
+    "feedbackMaxWords": 250
+  },
+  "cvParser": {
+    "skillPatterns": [
+      "React", "Vue", "Angular", "Next.js", "TypeScript", "JavaScript",
+      "HTML", "CSS", "Tailwind", "Redux", "GraphQL",
+      "Node.js", "Express", "Python", "Django", "FastAPI", "Flask",
+      "Java", "Spring", "Go", "Rust", "PHP", "Laravel", "Ruby", "Rails",
+      "Machine Learning", "TensorFlow", "PyTorch", "Pandas", "SQL",
+      "PostgreSQL", "MySQL", "MongoDB", "Redis", "Elasticsearch",
+      "AWS", "GCP", "Azure", "Docker", "Kubernetes", "CI/CD",
+      "Terraform", "Jenkins", "GitHub Actions", "Linux",
+      "REST API", "Microservices", "Agile", "Scrum", "TDD",
+      "System Design", "Git"
+    ],
+    "defaultSkills": ["Software Development"],
+    "defaultJobTitle": "Software Engineer"
   }
 }

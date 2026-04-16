@@ -18,9 +18,26 @@ import { getSession, addMessage, markCompleted } from '../../lib/sessionStore';
 import { buildFollowUpPrompt, buildFeedbackPrompt } from '../../lib/prompts';
 import { sendMessage } from '../../lib/aiClient';
 import { logError, logInfo } from '../../lib/logger';
+import fs from 'fs';
+import path from 'path';
+
+// Load configuration
+let config;
+try {
+  const configPath = path.join(process.cwd(), 'config.json');
+  const configFile = fs.readFileSync(configPath, 'utf8');
+  config = JSON.parse(configFile);
+} catch (error) {
+  // Use defaults if config.json is not available
+  config = {
+    interview: { maxQuestions: 6, answerMaxLength: 5000 },
+    ai: { maxTokens: { followUpQuestion: 256, feedback: 600 } }
+  };
+}
 
 // After this many AI questions, wrap up and generate feedback
-const MAX_QUESTIONS = 6;
+const MAX_QUESTIONS = config.interview?.maxQuestions || 6;
+const MAX_ANSWER_LENGTH = config.interview?.answerMaxLength || 5000;
 
 export default async function handler(req, res) {
   try {
@@ -45,8 +62,8 @@ export default async function handler(req, res) {
       return res.status(400).json({ error: 'Answer is required and cannot be empty' });
     }
 
-    if (answer.trim().length > 5000) {
-      return res.status(400).json({ error: 'Answer is too long (max 5000 characters)' });
+    if (answer.trim().length > MAX_ANSWER_LENGTH) {
+      return res.status(400).json({ error: `Answer is too long (max ${MAX_ANSWER_LENGTH} characters)` });
     }
 
     // Step 1: Load the session (includes full CV + history)
@@ -105,9 +122,13 @@ async function generateNextQuestion(session, res) {
       session.questionCount
     );
 
+    const maxTokens = typeof config.ai?.maxTokens === 'object'
+      ? config.ai.maxTokens.followUpQuestion || 256
+      : config.ai?.maxTokens || 256;
+    
     const question = await sendMessage(
       [{ role: 'user', content: prompt }],
-      256
+      maxTokens
     );
 
     // Validate AI response
@@ -164,9 +185,13 @@ async function generateFeedback(session, res) {
       session.messages
     );
 
+    const maxTokens = typeof config.ai?.maxTokens === 'object'
+      ? config.ai.maxTokens.feedback || 600
+      : config.ai?.maxTokens || 600;
+    
     const feedback = await sendMessage(
       [{ role: 'user', content: prompt }],
-      600  // Feedback needs more space than a single question
+      maxTokens
     );
 
     // Validate AI response

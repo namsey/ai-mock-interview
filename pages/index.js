@@ -26,44 +26,65 @@ export default function Home() {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, loading, feedback]);
 
-  // ── Handle .txt file upload ──────────────────────────────────────────────────
-  const handleFileUpload = (e) => {
+  // ── Handle file upload (TXT, PDF, DOCX) ──────────────────────────────────────
+  const handleFileUpload = async (e) => {
     try {
       const file = e.target.files[0];
       if (!file) return;
       
-      if (!file.name.endsWith('.txt')) {
-        alert('Please upload a .txt file. PDF support is planned for Phase 2.');
+      // Validate file type
+      const allowedExtensions = ['txt', 'pdf', 'doc', 'docx'];
+      const fileExtension = file.name.toLowerCase().split('.').pop();
+      
+      if (!allowedExtensions.includes(fileExtension)) {
+        alert('Please upload a .txt, .pdf, or .docx file.');
         return;
       }
 
-      // Check file size (max 1MB)
-      if (file.size > 1024 * 1024) {
-        alert('File is too large. Please upload a file smaller than 1MB.');
+      // Check file size (max 5MB)
+      if (file.size > 5 * 1024 * 1024) {
+        alert('File is too large. Please upload a file smaller than 5MB.');
         return;
       }
 
-      const reader = new FileReader();
-      reader.onload = (ev) => {
-        try {
-          const content = ev.target.result;
-          if (!content || typeof content !== 'string') {
-            throw new Error('Invalid file content');
-          }
-          setCvText(content);
-        } catch (err) {
-          console.error('Error processing file content:', err);
-          alert('Failed to process file content. Please paste your CV instead.');
+      // Show loading state
+      setLoading(true);
+
+      // Create FormData and upload to API
+      const formData = new FormData();
+      formData.append('file', file);
+
+      try {
+        const res = await fetch('/api/upload', {
+          method: 'POST',
+          body: formData
+        });
+
+        const data = await res.json();
+
+        if (!res.ok) {
+          throw new Error(data.error || 'Failed to process file');
         }
-      };
-      reader.onerror = (err) => {
-        console.error('FileReader error:', err);
-        alert('Failed to read file. Please paste your CV instead.');
-      };
-      reader.readAsText(file);
+
+        // Set the extracted text
+        if (data.text) {
+          setCvText(data.text);
+          alert(`Successfully loaded ${data.fileName}`);
+        } else {
+          throw new Error('No text extracted from file');
+        }
+
+      } catch (uploadError) {
+        console.error('Error uploading file:', uploadError);
+        alert(uploadError.message || 'Failed to process file. Please paste your CV text instead.');
+      } finally {
+        setLoading(false);
+      }
+
     } catch (err) {
       console.error('Error handling file upload:', err);
       alert('Failed to upload file. Please paste your CV instead.');
+      setLoading(false);
     }
   };
 
@@ -252,13 +273,19 @@ export default function Home() {
         </p>
 
         <div style={styles.card}>
-          <label style={styles.label}>Upload CV (.txt file)</label>
+          <label style={styles.label}>Upload CV (.txt, .pdf, or .docx)</label>
           <input
             type="file"
-            accept=".txt"
+            accept=".txt,.pdf,.doc,.docx"
             onChange={handleFileUpload}
             style={{ marginTop: 6, display: 'block', fontSize: 14 }}
+            disabled={loading}
           />
+          {loading && (
+            <p style={{ color: '#6366f1', fontSize: 13, marginTop: 8, fontStyle: 'italic' }}>
+              Processing file...
+            </p>
+          )}
 
           <div style={{ margin: '20px 0', borderTop: '1px solid #e5e7eb' }} />
 

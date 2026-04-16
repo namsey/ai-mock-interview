@@ -18,6 +18,22 @@ import { createSession, addMessage } from '../../lib/sessionStore';
 import { buildOpeningPrompt } from '../../lib/prompts';
 import { sendMessage } from '../../lib/aiClient';
 import { logError, logInfo } from '../../lib/logger';
+import fs from 'fs';
+import path from 'path';
+
+// Load configuration
+let config;
+try {
+  const configPath = path.join(process.cwd(), 'config.json');
+  const configFile = fs.readFileSync(configPath, 'utf8');
+  config = JSON.parse(configFile);
+} catch (error) {
+  // Use defaults if config.json is not available
+  config = {
+    interview: { cvMinLength: 50 },
+    ai: { maxTokens: { openingQuestion: 256 } }
+  };
+}
 
 export default async function handler(req, res) {
   try {
@@ -38,9 +54,10 @@ export default async function handler(req, res) {
       return res.status(400).json({ error: 'CV text is required and must be a string' });
     }
 
-    if (cvText.trim().length < 50) {
+    const minLength = config.interview?.cvMinLength || 50;
+    if (cvText.trim().length < minLength) {
       return res.status(400).json({
-        error: 'CV text is too short. Please provide more detail (at least a few sentences).'
+        error: `CV text is too short. Please provide more detail (at least ${minLength} characters).`
       });
     }
 
@@ -74,9 +91,13 @@ export default async function handler(req, res) {
     let question;
     try {
       const prompt = buildOpeningPrompt(cvText, skills, jobTitle);
+      const maxTokens = typeof config.ai?.maxTokens === 'object'
+        ? config.ai.maxTokens.openingQuestion || 256
+        : config.ai?.maxTokens || 256;
+      
       question = await sendMessage(
         [{ role: 'user', content: prompt }],
-        256 // Questions should be concise — no need for more
+        maxTokens
       );
       logInfo('/api/start', 'Successfully generated opening question');
     } catch (aiError) {
