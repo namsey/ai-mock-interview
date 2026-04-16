@@ -7,6 +7,7 @@
 
 import formidable from 'formidable';
 import { parseFile, validateFileSize, validateFileType } from '../../lib/fileParser';
+import { logError, logInfo, logWarn } from '../../lib/logger.js';
 import fs from 'fs/promises';
 
 // Disable Next.js default body parser to handle file uploads
@@ -19,8 +20,11 @@ export const config = {
 export default async function handler(req, res) {
   // Only allow POST requests
   if (req.method !== 'POST') {
+    logWarn('Upload API', `Method ${req.method} not allowed`);
     return res.status(405).json({ error: 'Method not allowed. Use POST.' });
   }
+
+  logInfo('Upload API', 'File upload request received');
 
   try {
     // Parse the multipart form data
@@ -40,6 +44,7 @@ export default async function handler(req, res) {
     const uploadedFile = files.file;
     
     if (!uploadedFile) {
+      logWarn('Upload API', 'No file provided in upload request');
       return res.status(400).json({ error: 'No file uploaded. Please select a file.' });
     }
 
@@ -50,6 +55,7 @@ export default async function handler(req, res) {
     try {
       validateFileType(file.originalFilename || file.newFilename);
     } catch (error) {
+      logWarn('Upload API', `Invalid file type: ${file.originalFilename || file.newFilename}`, error);
       return res.status(400).json({ error: error.message });
     }
 
@@ -60,6 +66,7 @@ export default async function handler(req, res) {
     try {
       validateFileSize(fileBuffer, 5);
     } catch (error) {
+      logWarn('Upload API', `File too large: ${fileBuffer.length} bytes`, error);
       return res.status(400).json({ error: error.message });
     }
 
@@ -68,7 +75,7 @@ export default async function handler(req, res) {
     try {
       extractedText = await parseFile(fileBuffer, file.originalFilename || file.newFilename);
     } catch (error) {
-      console.error('[Upload API] Error parsing file:', error);
+      logError('Upload API', `Error parsing file: ${file.originalFilename || file.newFilename}`, error);
       return res.status(400).json({ error: error.message });
     }
 
@@ -76,16 +83,19 @@ export default async function handler(req, res) {
     try {
       await fs.unlink(file.filepath);
     } catch (cleanupError) {
-      console.error('[Upload API] Error cleaning up temp file:', cleanupError);
+      logWarn('Upload API', `Error cleaning up temp file: ${file.filepath}`, cleanupError);
       // Don't fail the request if cleanup fails
     }
 
     // Validate extracted text
     if (!extractedText || extractedText.trim().length < 50) {
+      logWarn('Upload API', `Extracted text too short: ${extractedText?.trim().length || 0} characters`);
       return res.status(400).json({ 
         error: 'Extracted text is too short. Please ensure your CV contains at least 50 characters of content.' 
       });
     }
+
+    logInfo('Upload API', `File uploaded successfully: ${file.originalFilename || file.newFilename} (${extractedText.length} characters extracted)`);
 
     // Return the extracted text
     return res.status(200).json({
@@ -96,7 +106,7 @@ export default async function handler(req, res) {
     });
 
   } catch (error) {
-    console.error('[Upload API] Unexpected error:', error);
+    logError('Upload API', 'Unexpected error during file upload', error);
     
     if (error.message && error.message.includes('maxFileSize')) {
       return res.status(400).json({ error: 'File is too large. Maximum size is 5MB.' });
