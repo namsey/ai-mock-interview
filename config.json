@@ -1,0 +1,45 @@
+{
+  "ai": {
+    "providers": {
+      "openai": { "enabled": true, "models": ["gpt-4o-mini", "gpt-3.5-turbo"] },
+      "anthropic": { "enabled": true, "models": ["claude-sonnet-4-20250514", "claude-haiku-4-5-20251001"] }
+    },
+    "preferredProvider": "anthropic",
+    "maxTokens": {
+      "openingQuestion": 300,
+      "followUpQuestion": 300,
+      "evaluation": 300,
+      "claimExtraction": 400,
+      "contradictionCheck": 250,
+      "challenge": 300,
+      "feedback": 800
+    }
+  },
+  "interview": {
+    "minAnswersForEnd": 5,
+    "maxAnswersHardCap": 10,
+    "cvMinLength": 50,
+    "answerMaxLength": 5000,
+    "stages": {
+      "intro":        { "answerRange": [0, 1] },
+      "cv_deep_dive": { "answerRange": [1, 3] },
+      "technical":    { "answerRange": [3, 7] },
+      "behavioral":   { "answerRange": [7, 9] }
+    }
+  },
+  "difficulty": {
+    "startAt": "easy",
+    "scoreThresholdUp": 4.0,
+    "scoreThresholdDown": 1.5,
+    "lookbackWindow": 2
+  },
+  "challenge": {
+    "normalModeRate": 0.3,
+    "probingModeRate": 0.5,
+    "pressureModeRate": 0.65
+  },
+  "topicTracker": {
+    "maxDepthPerTopic": 5,
+    "questionsBeforeExhaustion": 3
+  }
+}
