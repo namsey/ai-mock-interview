@@ -16,7 +16,7 @@
     }
   },
   "interview": {
-    "minAnswersForEnd": 5,
+    "minAnswersForEnd": 3,
     "maxAnswersHardCap": 10,
     "cvMinLength": 50,
     "answerMaxLength": 5000,

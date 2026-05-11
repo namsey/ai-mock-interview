@@ -20,14 +20,14 @@ import {
 import {
   buildQuestionGeneratorPrompt, buildFollowUpPrompt, buildEvaluatorPrompt,
   buildFinalFeedbackPrompt, buildChallengePrompt, buildContradictionPrompt
-} from '../../lib/prompts';
+} from '../../lib/prompts/index.js';
 import { buildClaimExtractorPrompt, normalizeClaims } from '../../lib/claimExtractor';
 import { detectContradiction } from '../../lib/contradictionDetector';
 import { decidechallenge } from '../../lib/challengeEngine';
 import { extractTopicsFromCV, selectNextTopic, scoreToConfidence } from '../../lib/topicTracker';
 import { orchestrate, summariseScores } from '../../lib/orchestrator';
 import { sendMessage, sendStructuredMessage } from '../../lib/aiClient';
-import { logError, logInfo } from '../../lib/logger';
+import { logError, logInfo, logRequest, logWarn } from '../../lib/logger';
 import fs from 'fs';
 import path from 'path';
 
@@ -41,23 +41,47 @@ try {
 const MAX_ANSWER_LENGTH = config.interview?.answerMaxLength || 5000;
 
 export default async function handler(req, res) {
-  if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
+  const startTime = Date.now();
+  
+  logInfo('/api/chat', 'Request received', { method: req.method });
+  
+  if (req.method !== 'POST') {
+    logRequest('/api/chat', req.method, '/api/chat', 405, Date.now() - startTime);
+    return res.status(405).json({ error: 'Method not allowed' });
+  }
 
   const { sessionId, answer } = req.body;
   if (!sessionId || !answer?.trim()) {
+    logWarn('/api/chat', 'Missing sessionId or answer');
+    logRequest('/api/chat', 'POST', '/api/chat', 400, Date.now() - startTime);
     return res.status(400).json({ error: 'sessionId and answer are required.' });
   }
   if (answer.trim().length > MAX_ANSWER_LENGTH) {
+    logWarn('/api/chat', 'Answer too long', { length: answer.trim().length, maxLength: MAX_ANSWER_LENGTH });
+    logRequest('/api/chat', 'POST', '/api/chat', 400, Date.now() - startTime);
     return res.status(400).json({ error: `Answer too long (max ${MAX_ANSWER_LENGTH} chars).` });
   }
 
   const session = getSession(sessionId);
-  if (!session) return res.status(404).json({ error: 'Session not found. Please start a new interview.' });
-  if (session.phase === 'completed') return res.status(400).json({ error: 'Interview already completed.' });
+  if (!session) {
+    logWarn('/api/chat', 'Session not found', { sessionId });
+    logRequest('/api/chat', 'POST', '/api/chat', 404, Date.now() - startTime);
+    return res.status(404).json({ error: 'Session not found. Please start a new interview.' });
+  }
+  if (session.phase === 'completed') {
+    logWarn('/api/chat', 'Interview already completed', { sessionId });
+    logRequest('/api/chat', 'POST', '/api/chat', 400, Date.now() - startTime);
+    return res.status(400).json({ error: 'Interview already completed.' });
+  }
 
   const trimmedAnswer = answer.trim();
   addMessage(sessionId, 'user', trimmedAnswer);
-  logInfo('/api/chat', `Answer — session ${sessionId}, stage: ${session.currentStage}, mode: ${session.interviewMode}`);
+  logInfo('/api/chat', 'Processing answer', { 
+    sessionId, 
+    stage: session.currentStage, 
+    mode: session.interviewMode,
+    answerLength: trimmedAnswer.length
+  });
 
   try {
     const lastQuestion = getLastQuestion(session.messages);
@@ -79,7 +103,13 @@ export default async function handler(req, res) {
         answer: trimmedAnswer,
         stage: session.currentStage
       });
-      logInfo('/api/chat', `Scored: ${lastScore.score}/5`);
+      logInfo('/api/chat', 'Answer scored', { 
+        sessionId, 
+        score: `${lastScore.score}/5`,
+        reasoning: lastScore.reasoning?.substring(0, 100) 
+      });
+    } else if (scoreResult.status === 'rejected') {
+      logWarn('/api/chat', 'Failed to score answer', { sessionId, error: scoreResult.reason?.message });
     }
 
     // Process claims
@@ -87,7 +117,9 @@ export default async function handler(req, res) {
     if (claimsResult.status === 'fulfilled' && claimsResult.value?.length) {
       newClaims = claimsResult.value;
       addClaims(sessionId, newClaims);
-      logInfo('/api/chat', `Claims extracted: ${newClaims.length}`);
+      logInfo('/api/chat', 'Claims extracted', { sessionId, claimsCount: newClaims.length });
+    } else if (claimsResult.status === 'rejected') {
+      logWarn('/api/chat', 'Failed to extract claims', { sessionId, error: claimsResult.reason?.message });
     }
 
     // ── Pure JS analysis (no AI, no latency) ───────────────────────────────
@@ -97,7 +129,11 @@ export default async function handler(req, res) {
     const contradictionResult = detectContradiction(newClaims, freshSession.claims.slice(0, -newClaims.length));
     if (contradictionResult.found) {
       addContradiction(sessionId, contradictionResult.contradiction);
-      logInfo('/api/chat', 'Contradiction detected');
+      logInfo('/api/chat', 'Contradiction detected', { 
+        sessionId,
+        claim1: contradictionResult.contradiction.claim1?.claim.substring(0, 50),
+        claim2: contradictionResult.contradiction.claim2?.claim.substring(0, 50)
+      });
     }
 
     // Topic tracking
@@ -132,7 +168,14 @@ export default async function handler(req, res) {
     // ── Orchestrate ─────────────────────────────────────────────────────────
     const latestSession = getSession(sessionId);
     const decision = orchestrate(latestSession, challengeDecision, contradictionResult, nextTopicName);
-    logInfo('/api/chat', `Decision: action=${decision.actionType}, mode=${decision.interviewMode}`);
+    logInfo('/api/chat', 'Decision made', { 
+      sessionId,
+      actionType: decision.actionType,
+      interviewMode: decision.interviewMode,
+      stage: decision.stage,
+      difficulty: decision.difficulty,
+      shouldEnd: decision.shouldEnd
+    });
 
     // Apply session updates
     updateStageAndDifficulty(sessionId, { stage: decision.stage, difficulty: decision.difficulty });
@@ -142,14 +185,39 @@ export default async function handler(req, res) {
     });
 
     // ── Generate response ───────────────────────────────────────────────────
-    if (decision.shouldEnd) return await generateFeedback(getSession(sessionId), res);
-    return await generateNextTurn(getSession(sessionId), decision, lastScore, newClaims, res);
+    if (decision.shouldEnd) {
+      logInfo('/api/chat', 'Generating final feedback', { sessionId });
+      return await generateFeedback(getSession(sessionId), res, startTime);
+    }
+    return await generateNextTurn(getSession(sessionId), decision, lastScore, newClaims, res, startTime);
 
   } catch (err) {
-    logError('/api/chat', 'Error', err);
-    if (err.message?.includes('429')) return res.status(429).json({ error: 'Rate limit reached. Please try again.' });
+    const duration = Date.now() - startTime;
+    logError('/api/chat', 'Failed to process chat request', err);
+    
+    if (err.message?.includes('429')) {
+      logRequest('/api/chat', 'POST', '/api/chat', 429, duration, err);
+      return res.status(429).json({ error: 'Rate limit reached. Please try again.' });
+    }
+    if (isAIProviderUnavailable(err)) {
+      logRequest('/api/chat', 'POST', '/api/chat', 503, duration, err);
+      return res.status(503).json({
+        error: 'AI provider unavailable. Check your network connection or try again.'
+      });
+    }
+    
+    logRequest('/api/chat', 'POST', '/api/chat', 500, duration, err);
     return res.status(500).json({ error: 'Failed to generate response. Please try again.' });
   }
+}
+
+function isAIProviderUnavailable(err) {
+  const message = err.message || '';
+  return err.aiProviderUnavailable
+    || err.code === 'AI_PROVIDER_UNAVAILABLE'
+    || message.includes('Connection error')
+    || message.includes('fetch failed')
+    || message.includes('timeout');
 }
 
 // ─── Analysis helpers ─────────────────────────────────────────────────────────
@@ -169,7 +237,7 @@ async function extractClaims(question, answer, turnIndex) {
 
 // ─── Response generators ──────────────────────────────────────────────────────
 
-async function generateNextTurn(session, decision, lastScore, newClaims, res) {
+async function generateNextTurn(session, decision, lastScore, newClaims, res, startTime) {
   const { structuredCV, messages, currentStage, difficulty, interviewMode, topics, currentTopic } = session;
 
   const topicEntry = topics.find(t => t.topic?.toLowerCase() === currentTopic?.toLowerCase());
@@ -185,10 +253,11 @@ async function generateNextTurn(session, decision, lastScore, newClaims, res) {
       if (unsurfaced) {
         unsurfaced.surfaced = true;
         prompt = buildContradictionPrompt(unsurfaced, messages);
-        logInfo('/api/chat', 'Generating contradiction question');
+        logInfo('/api/chat', 'Generating contradiction question', { sessionId: session.id });
       } else {
         // Fallback to follow-up if none found
         prompt = buildFollowUpPrompt(structuredCV, messages, currentStage, difficulty, lastScore, topicEntry, recentClaims, interviewMode);
+        logInfo('/api/chat', 'No unsurfaced contradiction, generating follow-up', { sessionId: session.id });
       }
       break;
     }
@@ -201,7 +270,10 @@ async function generateNextTurn(session, decision, lastScore, newClaims, res) {
         difficulty,
         interviewMode
       );
-      logInfo('/api/chat', `Generating challenge: ${decision.challengeType}`);
+      logInfo('/api/chat', 'Generating challenge question', { 
+        sessionId: session.id, 
+        challengeType: decision.challengeType 
+      });
       break;
 
     case 'new_topic':
@@ -214,7 +286,10 @@ async function generateNextTurn(session, decision, lastScore, newClaims, res) {
         topicEntry,
         interviewMode
       );
-      logInfo('/api/chat', `New topic/stage opener: ${currentTopic}`);
+      logInfo('/api/chat', 'Generating new topic question', { 
+        sessionId: session.id, 
+        topic: currentTopic 
+      });
       break;
 
     case 'followup':
@@ -239,6 +314,14 @@ async function generateNextTurn(session, decision, lastScore, newClaims, res) {
     upsertTopic(session.id, currentTopic, { depthDelta: 0 }); // just increment questionCount
   }
 
+  const duration = Date.now() - startTime;
+  logInfo('/api/chat', 'Question generated successfully', { 
+    sessionId: session.id, 
+    questionNum: session.questionCount,
+    duration: `${duration}ms`
+  });
+  logRequest('/api/chat', 'POST', '/api/chat', 200, duration);
+
   return res.status(200).json({
     type: responseType,
     content: question,
@@ -250,14 +333,25 @@ async function generateNextTurn(session, decision, lastScore, newClaims, res) {
   });
 }
 
-async function generateFeedback(session, res) {
+async function generateFeedback(session, res, startTime) {
   const { structuredCV, messages, scores, claims, contradictions, topics } = session;
   const prompt = buildFinalFeedbackPrompt(structuredCV, messages, scores, claims, contradictions, topics);
   const feedback = await sendMessage([{ role: 'user', content: prompt }], 800);
   markCompleted(session.id);
 
   const scoreSummary = summariseScores(scores);
-  logInfo('/api/chat', `Completed. Avg: ${scoreSummary.average}, Topics: ${topics.length}, Claims: ${claims.length}`);
+  const duration = Date.now() - startTime;
+  
+  logInfo('/api/chat', 'Interview completed', { 
+    sessionId: session.id,
+    averageScore: scoreSummary.average,
+    totalAnswered: scoreSummary.totalAnswered,
+    topicsCovered: topics.length,
+    claimsCount: claims.length,
+    contradictionsCount: contradictions.length,
+    duration: `${duration}ms`
+  });
+  logRequest('/api/chat', 'POST', '/api/chat', 200, duration);
 
   return res.status(200).json({
     type: 'feedback',
